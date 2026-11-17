@@ -1,4 +1,4 @@
-# Identity Mask 0.1 — GTA V
+# Identity Mask 0.2 — GTA V
 
 Menu ASI sperimentale per cambiare l'hash d'identita del modello del giocatore senza chiamare SET_PLAYER_MODEL e senza caricare un altro aspetto.
 
@@ -17,22 +17,22 @@ La maschera e solo nella RAM, non viene riapplicata all'avvio. Al cambio del pun
 ## Compilazione su GitHub
 
 1. Crea un repository e carica il CONTENUTO di questa cartella nella radice: CMakeLists.txt, src, .github, IdentityMask.ini, README.md e LICENSE. Attenzione a includere la cartella nascosta .github.
-2. Apri Actions → Build Identity Mask. Il push avvia la compilazione; puoi avviarla anche con Run workflow.
+2. Apri Actions → Build Identity Mask. Avvia esclusivamente con Run workflow: push e pull request non lanciano la compilazione.
 3. Al termine scarica l'artefatto IdentityMask-Windows-x64 e decomprimilo.
 4. Copia IdentityMask.asi e IdentityMask.ini accanto a GTA5.exe.
 
-La build usa CMake e MSVC x64 su windows-2022. Il plugin risolve dinamicamente le funzioni di ScriptHookV: nessun SDK, libreria .lib o file del gioco da caricare nel repository. ScriptHookV.dll rimane necessario nel gioco. Se mancano gli export richiesti il plugin non si carica.
+La build usa CMake e MSVC x64 su windows-2022. Il plugin importa scriptRegister da ScriptHookV.dll per farla caricare automaticamente da Windows prima di DllMain, poi risolve le altre funzioni: nessun SDK, libreria .lib o file del gioco da caricare nel repository. ScriptHookV.dll rimane necessario nel gioco. Se mancano gli export fondamentali, il plugin registra quale funzione manca e non si avvia. La funzione per accedere alla memoria e opzionale all'avvio: se manca, il menu si apre comunque e segnala l'errore quando si prova ad applicare un'identita.
 
 ## Comandi
 
 | Comando | Tasto |
 | --- | --- |
-| Apri/chiudi | F8 |
+| Apri/chiudi | F6 |
 | Seleziona | Freccia su/giu oppure Num8/Num2 |
 | Applica | Invio oppure Num5 |
 | Chiudi | Esc |
 
-Nel menu trovi Michael, Franklin, Trevor e Ripristina identita originale. L'hash mostrato e quello letto in quel momento dalla native, non il nome dell'aspetto originale. Premi Ripristina per annullare la modifica. Il tasto apertura si cambia nel file INI con un codice virtual-key da F1 a F24 (F8=119, F9=120). Gli errori vengono scritti in IdentityMask.log accanto al plugin.
+Nel menu trovi Michael, Franklin, Trevor e Ripristina identita originale. L'hash mostrato e quello letto in quel momento dalla native, non il nome dell'aspetto originale. Premi Ripristina per annullare la modifica. Il tasto apertura si cambia nel file INI con un codice virtual-key da F1 a F24 (F6=117, F9=120). Gli errori vengono scritti in IdentityMask.log accanto al plugin.
 
 | Identita | Nome | Hash |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ Nel menu trovi Michael, Franklin, Trevor e Ripristina identita originale. L'hash
 
 ## Prima prova in gioco
 
-Conserva un salvataggio di prova. Avvia la Storia con Franklin, apri F8, scegli Michael: verifica che Franklin resti visibile e che il numero in menu diventi 0x0D7114C9. Usa Ripristina: il numero deve tornare 0x9B22DBAF. Ripeti con Trevor. Questo verifica il cambio hash, non tutte le missioni o l'intero stato del protagonista. Se compare Layout non riconosciuto, non vengono tentati offset alternativi: fornisci versione/edizione GTA e log per adattare il codice.
+Conserva un salvataggio di prova. Avvia la Storia con Franklin, apri F6, scegli Michael: verifica che Franklin resti visibile e che il numero in menu diventi 0x0D7114C9. Usa Ripristina: il numero deve tornare 0x9B22DBAF. Ripeti con Trevor. Questo verifica il cambio hash, non tutte le missioni o l'intero stato del protagonista. Se compare Layout non riconosciuto, non vengono tentati offset alternativi: fornisci versione/edizione GTA e log per adattare il codice.
 
 ## Riferimenti tecnici
 
@@ -53,3 +53,12 @@ Conserva un salvataggio di prova. Avvia la Storia con Franklin, apri F8, scegli 
 - Native database: https://github.com/alloc8or/gta5-nativedb-data
 
 Implementazione indipendente. Nessun binario, codice o asset del vecchio Character Swap e incluso.
+
+## Correzioni 0.2 e diagnosi apertura
+
+- Dipendenza esplicita da ScriptHookV.dll: la 0.1 poteva fallire se nessun altro plugin l'aveva gia caricata.
+- F6 predefinito nel codice e nel file INI. Sostituisci ANCHE il vecchio IdentityMask.ini, altrimenti la sua impostazione OpenKey=119 continua a scegliere F8.
+- Compilazione GitHub avviabile esclusivamente da Actions > Build Identity Mask > Run workflow.
+- Log scritto gia dall'ingresso nella DLL, anche prima di ScriptMain. Le righe indicano DLL attached, Script registered, ScriptMain running, Menu virtual key e Menu opened.
+
+Se non compare alcun IdentityMask.log, controlla asiloader.log e ScriptHookV.log: la DLL potrebbe non essere stata caricata affatto (ASI Loader, dipendenza mancante o file nella cartella sbagliata). Se il log compare, invialo insieme a edizione e build GTA per individuare il punto preciso. La directory GTA deve consentire la scrittura del log. Non e stato possibile provare il plugin nel gioco o compilarlo in questo ambiente: la correzione risolve il difetto individuato nel codice, ma il risultato sulla tua installazione deve ancora essere verificato.

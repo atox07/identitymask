@@ -8,30 +8,47 @@
 #include <string>
 #include <type_traits>
 
+// This actual import makes Windows load ScriptHookV before our DllMain.
+__declspec(dllimport) void scriptRegister(HMODULE, void(*)());
+void startupLog(HMODULE instance, const char* line) {
+    wchar_t path[MAX_PATH]{};
+    if(!GetModuleFileNameW(instance,path,MAX_PATH)) return;
+    wchar_t* slash = wcsrchr(path,L'\\');
+    if(!slash) return;
+    if(wcscpy_s(slash+1, MAX_PATH-static_cast<size_t>(slash+1-path), L"IdentityMask.log")) return;
+    HANDLE f=CreateFileW(path,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(f==INVALID_HANDLE_VALUE) return;
+    DWORD written=0;
+    WriteFile(f,line,static_cast<DWORD>(strlen(line)),&written,nullptr);
+    WriteFile(f,"\r\n",2,&written,nullptr);
+    CloseHandle(f);
+}
+
 namespace shv {
 using U64 = std::uint64_t;
-void (*reg)(HMODULE, void(*)()) = nullptr;
 void (*unreg)(HMODULE) = nullptr;
 void (*wait)(DWORD) = nullptr;
 void (*init)(U64) = nullptr;
 void (*push)(U64) = nullptr;
 U64* (*call)() = nullptr;
 unsigned char* (*entity)(int) = nullptr;
+HMODULE owner = nullptr;
 template<class T> bool bind(HMODULE m, T& fn, const char* decorated, const char* plain) {
     fn = reinterpret_cast<T>(GetProcAddress(m, decorated));
     if (!fn) fn = reinterpret_cast<T>(GetProcAddress(m, plain));
+    if(!fn) { startupLog(owner,"Missing ScriptHookV export:"); startupLog(owner,decorated); }
     return fn != nullptr;
 }
 bool load() {
     auto m = GetModuleHandleW(L"ScriptHookV.dll");
-    if (!m) return false;
-    return bind(m, reg, "?scriptRegister@@YAXPEAUHINSTANCE__@@P6AXXZ@Z", "scriptRegister")
-        && bind(m, unreg, "?scriptUnregister@@YAXPEAUHINSTANCE__@@@Z", "scriptUnregister")
+    if (!m) { startupLog(owner,"ScriptHookV.dll not loaded"); return false; }
+    // Memory editing is optional at startup: its absence must not hide the menu.
+    bind(m, entity, "?getScriptHandleBaseAddress@@YAPEAEH@Z", "getScriptHandleBaseAddress");
+    return bind(m, unreg, "?scriptUnregister@@YAXPEAUHINSTANCE__@@@Z", "scriptUnregister")
         && bind(m, wait, "?scriptWait@@YAXK@Z", "scriptWait")
         && bind(m, init, "?nativeInit@@YAX_K@Z", "nativeInit")
         && bind(m, push, "?nativePush64@@YAX_K@Z", "nativePush64")
-        && bind(m, call, "?nativeCall@@YAPEA_KXZ", "nativeCall")
-        && bind(m, entity, "?getScriptHandleBaseAddress@@YAPEAEH@Z", "getScriptHandleBaseAddress");
+        && bind(m, call, "?nativeCall@@YAPEA_KXZ", "nativeCall");
 }
 template<class T> U64 pack(T v) {
     if constexpr (std::is_pointer_v<T>) return reinterpret_cast<U64>(v);
@@ -50,7 +67,7 @@ constexpr const char* labels[] = {"Michael", "Franklin", "Trevor", "Ripristina i
 HMODULE module;
 std::wstring folder;
 std::string status = "Scegli l'identita letta dal gioco.";
-int openKey = VK_F8;
+int openKey = VK_F6;
 bool menu = false;
 int selection = 0;
 std::array<bool, 256> previous{};
@@ -103,6 +120,7 @@ bool restore() {
 int playerPed() { return shv::invoke<int>(0xD80958FC74E988A6ULL); }
 Hash model(int ped) { return shv::invoke<Hash>(0x9F47B058362C84B5ULL, ped); }
 void apply(Hash target) {
+    if(!shv::entity) { message("Export memoria non disponibile: consulta IdentityMask.log."); return; }
     if (!restore()) return;
     const int handle = playerPed();
     if (!handle || !shv::invoke<int>(0x7239B21A38F536BAULL, handle)) { message("Giocatore non disponibile."); return; }
@@ -160,9 +178,10 @@ void draw() {
 void ScriptMain() {
     wchar_t path[MAX_PATH]{}; GetModuleFileNameW(module,path,MAX_PATH);
     folder = path; folder = folder.substr(0,folder.find_last_of(L"\\/")+1);
-    openKey = static_cast<int>(GetPrivateProfileIntW(L"Menu",L"OpenKey",VK_F8,(folder+L"IdentityMask.ini").c_str()));
-    if(openKey < VK_F1 || openKey > VK_F24) openKey = VK_F8;
-    log("Identity Mask 0.1 started; Legacy experimental layout.");
+    openKey = static_cast<int>(GetPrivateProfileIntW(L"Menu",L"OpenKey",VK_F6,(folder+L"IdentityMask.ini").c_str()));
+    if(openKey < VK_F1 || openKey > VK_F24) openKey = VK_F6;
+    log("Identity Mask 0.2: ScriptMain running.");
+    char keyLog[80]; std::snprintf(keyLog,sizeof(keyLog),"Menu virtual key: %d (F6 = 117)",openKey); log(keyLog);
     for (;;) {
         // Never carry the old mask silently to a different ped or a loaded save.
         if(patch.info && monitorPatch) {
@@ -176,7 +195,7 @@ void ScriptMain() {
         const bool down=pressed(VK_DOWN) | pressed(VK_NUMPAD2);
         const bool enter=pressed(VK_RETURN) | pressed(VK_NUMPAD5);
         const bool escape=pressed(VK_ESCAPE);
-        if(toggle) menu=!menu;
+        if(toggle) { menu=!menu; log(menu ? "Menu opened" : "Menu closed"); }
         if(menu) {
             // Disable game input only while menu is open (not keyboard polling).
             for(int control : {24,25,27,172,173,176,177,199,200,201,202})
@@ -193,8 +212,11 @@ void ScriptMain() {
 BOOL APIENTRY DllMain(HMODULE instance,DWORD reason,LPVOID) {
     if(reason==DLL_PROCESS_ATTACH) {
         module=instance; DisableThreadLibraryCalls(instance);
-        if(!shv::load()) { OutputDebugStringA("Identity Mask: missing ScriptHookV exports\n"); return FALSE; }
-        shv::reg(instance,ScriptMain);
+        shv::owner=instance;
+        startupLog(instance,"Identity Mask 0.2: DLL attached");
+        if(!shv::load()) { startupLog(instance,"Initialization failed; see missing export above"); return FALSE; }
+        scriptRegister(instance,ScriptMain);
+        startupLog(instance,"Script registered; waiting for ScriptMain");
     } else if(reason==DLL_PROCESS_DETACH && shv::unreg) {
         // Loader-lock path: only unregister. Restore via menu before hot-unloading.
         shv::unreg(instance);

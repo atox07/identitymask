@@ -1,7 +1,5 @@
 name: Build Identity Mask
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
