@@ -1,0 +1,26 @@
+name: Build Identity Mask
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure x64
+        run: cmake -S . -B build -A x64
+      - name: Compile
+        run: cmake --build build --config Release --parallel
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist
+          Copy-Item build/Release/IdentityMask.asi,IdentityMask.ini,README.md -Destination dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IdentityMask-Windows-x64
+          path: dist/
+          if-no-files-found: error
