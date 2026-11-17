@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <string>
 #include <type_traits>
+#include "Compatibility.h"
 
 // This actual import makes Windows load ScriptHookV before our DllMain.
 __declspec(dllimport) void scriptRegister(HMODULE, void(*)());
@@ -104,11 +105,11 @@ bool restore() {
     std::uintptr_t vt = 0;
     Hash current = 0;
     if (!readMemory(patch.info, &vt, sizeof(vt)) || vt != patch.vtable ||
-        !readMemory(patch.info + 0x18, &current, sizeof(current))) {
+        !readMemory(patch.info + compatibility::modelHashOffset, &current, sizeof(current))) {
         monitorPatch = false;
         message("Cannot restore: model memory is no longer valid. Restart GTA."); return false;
     }
-    if (current != patch.original && !writeHash(patch.info + 0x18, patch.applied, patch.original)) {
+    if (current != patch.original && !writeHash(patch.info + compatibility::modelHashOffset, patch.applied, patch.original)) {
         monitorPatch = false;
         message("Another script changed the hash. Restore stopped; restart GTA."); return false;
     }
@@ -127,15 +128,15 @@ bool apply(Hash target) {
     const auto ped = reinterpret_cast<std::uintptr_t>(shv::entity(handle));
     std::uintptr_t info = 0, vt = 0;
     Hash original = 0;
-    // Legacy layout: entity + 0x20 -> CBaseModelInfo; nameHash + 0x18.
+    // Legacy and Enhanced: entity + 0x20 -> CBaseModelInfo; nameHash + 0x18.
     // Validate against the native result before any write; never scan/write guessed offsets.
-    if (!ped || !readMemory(ped + 0x20, &info, sizeof(info)) || !info ||
+    if (!ped || !readMemory(ped + compatibility::modelInfoOffset, &info, sizeof(info)) || !info ||
         !readMemory(info, &vt, sizeof(vt)) || !vt ||
-        !readMemory(info + 0x18, &original, sizeof(original)) || !original || original != model(handle)) {
+        !readMemory(info + compatibility::modelHashOffset, &original, sizeof(original)) || !original || original != model(handle)) {
         message("Unrecognized layout: no changes applied."); return false;
     }
     if (original == target) { message("The model already has this identity."); return true; }
-    if (!writeHash(info + 0x18, original, target)) { message("Hash write refused."); return false; }
+    if (!writeHash(info + compatibility::modelHashOffset, original, target)) { message("Hash write refused."); return false; }
     patch = {info, vt, ped, handle, original, target};
     if (model(handle) != target) {
         if (restore()) message("Hash verification failed: change reverted.");
@@ -190,7 +191,7 @@ void retainMissionModel() {
     if(!ped || !shv::invoke<int>(0x7239B21A38F536BAULL,ped)) return;
     const auto address=reinterpret_cast<std::uintptr_t>(shv::entity(ped));
     std::uintptr_t info=0;
-    if(!address || !readMemory(address+0x20,&info,sizeof(info))) return;
+    if(!address || !readMemory(address+compatibility::modelInfoOffset,&info,sizeof(info))) return;
     Hash current=model(ped);
     if(retention.visual==retention.identity && current==retention.visual) return;
     if(patch.info==info && patch.ped==address && current==patch.applied) {
@@ -278,16 +279,27 @@ void draw() {
 void ScriptMain() {
     wchar_t path[MAX_PATH]{}; GetModuleFileNameW(module,path,MAX_PATH);
     folder = path; folder = folder.substr(0,folder.find_last_of(L"\\/")+1);
+    wchar_t gamePath[MAX_PATH]{};
+    if(!GetModuleFileNameW(nullptr,gamePath,MAX_PATH)) {
+        log("Unable to identify the game executable. Script stopped."); return;
+    }
+    const wchar_t* gameName=wcsrchr(gamePath,L'\\');
+    gameName=gameName ? gameName+1 : gamePath;
+    log(compatibility::edition);
+    if(_wcsicmp(gameName,compatibility::executable)!=0) {
+        log("Wrong edition package or renamed game executable. Install the matching Identity Mask ASI.");
+        return;
+    }
     openKey = static_cast<int>(GetPrivateProfileIntW(L"Menu",L"OpenKey",VK_F6,(folder+L"IdentityMask.ini").c_str()));
     if(openKey < VK_F1 || openKey > VK_F24) openKey = VK_F6;
-    log("Identity Mask 0.3: ScriptMain running.");
+    log("Identity Mask 0.4: ScriptMain running.");
     char keyLog[80]; std::snprintf(keyLog,sizeof(keyLog),"Menu virtual key: %d (F6 = 117)",openKey); log(keyLog);
     for (;;) {
         // Restore the old allocation first; the retention profile survives it.
         if(patch.info && monitorPatch) {
             const auto current = reinterpret_cast<std::uintptr_t>(shv::entity(playerPed()));
             std::uintptr_t info = 0;
-            if(current != patch.ped || !readMemory(current+0x20,&info,sizeof(info)) || info != patch.info)
+            if(current != patch.ped || !readMemory(current+compatibility::modelInfoOffset,&info,sizeof(info)) || info != patch.info)
                 restore();
         }
         retainMissionModel();
@@ -317,7 +329,7 @@ BOOL APIENTRY DllMain(HMODULE instance,DWORD reason,LPVOID) {
     if(reason==DLL_PROCESS_ATTACH) {
         module=instance; DisableThreadLibraryCalls(instance);
         shv::owner=instance;
-        startupLog(instance,"Identity Mask 0.3: DLL attached");
+        startupLog(instance,"Identity Mask 0.4: DLL attached");
         if(!shv::load()) { startupLog(instance,"Initialization failed; see missing export above"); return FALSE; }
         scriptRegister(instance,ScriptMain);
         startupLog(instance,"Script registered; waiting for ScriptMain");

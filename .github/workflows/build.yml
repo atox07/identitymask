@@ -10,15 +10,25 @@ jobs:
       - uses: actions/checkout@v4
       - name: Configure x64
         run: cmake -S . -B build -A x64
-      - name: Compile
+      - name: Compile Legacy and Enhanced
         run: cmake --build build --config Release --parallel
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist
-          Copy-Item build/Release/IdentityMask.asi,IdentityMask.ini,README.md -Destination dist
+          $ErrorActionPreference = 'Stop'
+          foreach ($edition in @('Legacy', 'Enhanced')) {
+            $destination = Join-Path 'dist' $edition
+            New-Item -ItemType Directory -Force $destination | Out-Null
+            Copy-Item "build/Release/$edition/IdentityMask.asi",IdentityMask.ini,README.md,COMPATIBILITY.md -Destination $destination
+            Set-Content -Path (Join-Path $destination 'EDITION.txt') -Value "Identity Mask 0.4 - $edition - install only this edition's ASI."
+          }
       - uses: actions/upload-artifact@v4
         with:
-          name: IdentityMask-Windows-x64
-          path: dist/
+          name: IdentityMask-Legacy-Windows-x64
+          path: dist/Legacy/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IdentityMask-Enhanced-Windows-x64
+          path: dist/Enhanced/
           if-no-files-found: error

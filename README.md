@@ -1,4 +1,4 @@
-# Identity Mask 0.3 — GTA V
+# Identity Mask 0.4 — GTA V
 
 An ASI menu that changes the identity hash read by the game while keeping your current visible ped. Includes automatic model and identity retention after a mission replay recreates the player.
 
@@ -6,10 +6,10 @@ An ASI menu that changes the identity hash read by the game while keeping your c
 
 1. Upload this folder's CONTENTS to the repository root, including the hidden .github folder.
 2. Open Actions > Build Identity Mask > Run workflow. The workflow runs manually only.
-3. Download and extract the IdentityMask-Windows-x64 artifact.
-4. Place IdentityMask.asi and IdentityMask.ini beside GTA5.exe. Requires a compatible ScriptHookV.dll and ASI Loader.
+3. One manual workflow run compiles BOTH editions. Download IdentityMask-Legacy-Windows-x64 for Legacy or IdentityMask-Enhanced-Windows-x64 for Enhanced.
+4. Place the chosen package's IdentityMask.asi and IdentityMask.ini beside GTA5.exe (Legacy) or GTA5_Enhanced.exe (Enhanced). Install one ASI per game directory; do not rename/install both builds together. Requires a compatible ScriptHookV.dll and ASI Loader.
 
-Target: GTA V Legacy x64 Story Mode. Enhanced is unverified. The menu and basic identity change in 0.2 were confirmed working by the user. The new retention behavior in 0.3 has not been compiled or tested in GTA in this environment.
+Targets: GTA V Legacy and Enhanced x64 Story Mode. Each build checks the running executable against its edition and stops with a log message if the wrong package is installed. Enhanced support is implemented from source references but still requires in-game verification on your installation. See COMPATIBILITY.md. The menu and basic identity change in 0.2 were confirmed working by the user. The retention behavior and new dual-edition build in 0.4 have not been compiled or tested in GTA in this environment.
 
 ## Controls
 
@@ -64,3 +64,9 @@ The 0.2 loader fix remains: an explicit scriptRegister import makes Windows load
 - https://github.com/citizenfx/natives/blob/master/PLAYER/SetPlayerModel.md
 
 Independent implementation. No original Character Swap code, binaries or game assets included. Build uses CMake/MSVC x64 on windows-2022, without an SDK download.
+
+## Building locally
+
+Configure once with `cmake -S . -B build -A x64`, then run `cmake --build build --config Release --parallel` to build both editions. Individual targets are `IdentityMask_Legacy` and `IdentityMask_Enhanced`.
+
+The resulting files are `build/Release/Legacy/IdentityMask.asi` and `build/Release/Enhanced/IdentityMask.asi`. Menu controls, identity choices, model retention and manual-only Actions triggering are shared. No ScriptHookVDotNet installation is required; its public source was used only as a compatibility reference.
