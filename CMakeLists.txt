@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(IdentityMask VERSION 0.2.0 LANGUAGES CXX)
+project(IdentityMask VERSION 0.3.0 LANGUAGES CXX)
 if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Build with MSVC x64 on Windows")
 endif()

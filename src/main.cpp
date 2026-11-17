@@ -1,4 +1,4 @@
-// Identity Mask: identity hash editing, without SET_PLAYER_MODEL.
+// Identity Mask: hash editing; model restoration only after a game reset.
 // Independent implementation; no copied mod code or SDK redistribution.
 #include <windows.h>
 #include <array>
@@ -63,10 +63,10 @@ template<class R = void, class... A> R invoke(U64 hash, A... args) {
 }
 using Hash = std::uint32_t;
 constexpr Hash identities[] = {0x0D7114C9, 0x9B22DBAF, 0x9B810FA2};
-constexpr const char* labels[] = {"Michael", "Franklin", "Trevor", "Ripristina identita originale"};
+constexpr const char* labels[] = {"Michael", "Franklin", "Trevor", "Restore original identity"};
 HMODULE module;
 std::wstring folder;
-std::string status = "Scegli l'identita letta dal gioco.";
+std::string status = "Choose the identity read by the game.";
 int openKey = VK_F6;
 bool menu = false;
 int selection = 0;
@@ -106,24 +106,24 @@ bool restore() {
     if (!readMemory(patch.info, &vt, sizeof(vt)) || vt != patch.vtable ||
         !readMemory(patch.info + 0x18, &current, sizeof(current))) {
         monitorPatch = false;
-        message("Ripristino impossibile: memoria modello non piu valida. Riavvia GTA."); return false;
+        message("Cannot restore: model memory is no longer valid. Restart GTA."); return false;
     }
     if (current != patch.original && !writeHash(patch.info + 0x18, patch.applied, patch.original)) {
         monitorPatch = false;
-        message("Hash cambiato da un altro script: ripristino sospeso. Riavvia GTA."); return false;
+        message("Another script changed the hash. Restore stopped; restart GTA."); return false;
     }
     patch = {};
     monitorPatch = true;
-    message("Identita originale ripristinata.");
+    message("Original identity restored.");
     return true;
 }
 int playerPed() { return shv::invoke<int>(0xD80958FC74E988A6ULL); }
 Hash model(int ped) { return shv::invoke<Hash>(0x9F47B058362C84B5ULL, ped); }
-void apply(Hash target) {
-    if(!shv::entity) { message("Export memoria non disponibile: consulta IdentityMask.log."); return; }
-    if (!restore()) return;
+bool apply(Hash target) {
+    if(!shv::entity) { message("Memory export unavailable. Check IdentityMask.log."); return false; }
+    if (!restore()) return false;
     const int handle = playerPed();
-    if (!handle || !shv::invoke<int>(0x7239B21A38F536BAULL, handle)) { message("Giocatore non disponibile."); return; }
+    if (!handle || !shv::invoke<int>(0x7239B21A38F536BAULL, handle)) { message("Player unavailable."); return false; }
     const auto ped = reinterpret_cast<std::uintptr_t>(shv::entity(handle));
     std::uintptr_t info = 0, vt = 0;
     Hash original = 0;
@@ -132,17 +132,117 @@ void apply(Hash target) {
     if (!ped || !readMemory(ped + 0x20, &info, sizeof(info)) || !info ||
         !readMemory(info, &vt, sizeof(vt)) || !vt ||
         !readMemory(info + 0x18, &original, sizeof(original)) || !original || original != model(handle)) {
-        message("Layout non riconosciuto: nessuna modifica applicata."); return;
+        message("Unrecognized layout: no changes applied."); return false;
     }
-    if (original == target) { message("Il modello ha gia questa identita."); return; }
-    if (!writeHash(info + 0x18, original, target)) { message("Scrittura hash rifiutata."); return; }
+    if (original == target) { message("The model already has this identity."); return true; }
+    if (!writeHash(info + 0x18, original, target)) { message("Hash write refused."); return false; }
     patch = {info, vt, ped, handle, original, target};
     if (model(handle) != target) {
-        if (restore()) message("Verifica hash fallita: modifica annullata.");
+        if (restore()) message("Hash verification failed: change reverted.");
+        return false;
+    }
+    message("Identity applied. Mission model retention is active.");
+    return true;
+}
+// Remember the real model BEFORE editing its hash. The retention profile is
+// independent of Patch, because replay loading can destroy the old player ped.
+struct Retention {
+    bool active = false;
+    Hash visual = 0, identity = 0;
+    std::array<int,12> drawable{}, texture{}, palette{};
+    std::array<int,8> prop{}, propTexture{};
+    std::uintptr_t candidate = 0;
+    ULONGLONG stableSince = 0, lastAttempt = 0, windowStart = 0;
+    unsigned attempts = 0;
+} retention;
+
+void forgetRetention() {
+    if(retention.active)
+        shv::invoke(0xE532F5D78798DAABULL, retention.visual); // SET_MODEL_AS_NO_LONGER_NEEDED
+    retention = {};
+}
+void selectIdentity(Hash target) {
+    const int ped = playerPed();
+    if(!ped || !shv::entity) { message("Player or memory export unavailable."); return; }
+    // Undo the previous spoof before capturing/streaming the real model.
+    if(!restore()) return;
+    Retention next;
+    next.visual = model(ped); next.identity = target;
+    for(int i=0;i<12;++i) {
+        next.drawable[i]=shv::invoke<int>(0x67F3780DD425D4FCULL,ped,i);
+        next.texture[i]=shv::invoke<int>(0x04A355E041E004E6ULL,ped,i);
+        next.palette[i]=shv::invoke<int>(0xE3DD5F2A84B42281ULL,ped,i);
+    }
+    for(int i=0;i<8;++i) {
+        next.prop[i]=shv::invoke<int>(0x898CC20EA75BACD8ULL,ped,i);
+        next.propTexture[i]=shv::invoke<int>(0xE131A28626F81AB2ULL,ped,i);
+    }
+    forgetRetention();
+    // Keep the original model resident across a replay's loading screen.
+    shv::invoke(0x963D27A58DF860ACULL,next.visual); // REQUEST_MODEL
+    if(apply(target)) { next.active=true; retention=next; }
+    else shv::invoke(0xE532F5D78798DAABULL,next.visual);
+}
+
+void retainMissionModel() {
+    if(!retention.active || !shv::entity) return;
+    const int ped=playerPed();
+    if(!ped || !shv::invoke<int>(0x7239B21A38F536BAULL,ped)) return;
+    const auto address=reinterpret_cast<std::uintptr_t>(shv::entity(ped));
+    std::uintptr_t info=0;
+    if(!address || !readMemory(address+0x20,&info,sizeof(info))) return;
+    Hash current=model(ped);
+    if(retention.visual==retention.identity && current==retention.visual) return;
+    if(patch.info==info && patch.ped==address && current==patch.applied) {
+        retention.candidate=0; return; // Already wearing the retained model/mask.
+    }
+    // Do not turn another protagonist into the selected character on a switch.
+    if(current!=retention.identity && current!=retention.visual) {
+        retention.candidate=0; return;
+    }
+    // Never replace a ped while the engine is loading/switching or in a cutscene.
+    if(shv::invoke<int>(0xD9D2CFFF49FAB35FULL) || // IS_PLAYER_SWITCH_IN_PROGRESS
+       shv::invoke<int>(0x991251AFC3981F84ULL) || // IS_CUTSCENE_ACTIVE
+       shv::invoke<int>(0x10D0A8F259E93EC9ULL) || // GET_IS_LOADING_SCREEN_ACTIVE
+       shv::invoke<int>(0x5A859503B0C08678ULL,ped,true)) { // IS_PED_DEAD_OR_DYING
+        retention.candidate=0; return;
+    }
+    const auto now=GetTickCount64();
+    if(retention.candidate!=address) {
+        retention.candidate=address; retention.stableSince=now; return;
+    }
+    if(now-retention.stableSince<500 || now-retention.lastAttempt<2000) return;
+    if(now-retention.windowStart>30000) { retention.windowStart=now; retention.attempts=0; }
+    if(retention.attempts>=3) {
+        forgetRetention();
+        message("Mission keeps resetting the model. Retention stopped; select again to retry.");
         return;
     }
-    message("Identita applicata. Il modello visibile non viene sostituito.");
+    retention.lastAttempt=now; ++retention.attempts;
+    if(!restore()) { forgetRetention(); return; }
+    current=model(ped);
+    if(current!=retention.visual) {
+        shv::invoke(0x963D27A58DF860ACULL,retention.visual);
+        if(!shv::invoke<int>(0x98A4EB5D89A0C952ULL,retention.visual)) return; // HAS_MODEL_LOADED
+        // Replay recreated the canonical protagonist. Restore the saved visual
+        // model, reacquire its new handle, restore outfit, then spoof its hash.
+        const int player=shv::invoke<int>(0x4F8644AF03D0E0D6ULL); // PLAYER_ID
+        shv::invoke(0x00A1CADD00108836ULL,player,retention.visual); // SET_PLAYER_MODEL
+        const int replacement=playerPed();
+        if(!replacement || model(replacement)!=retention.visual) {
+            forgetRetention(); message("Mission model restoration failed."); return;
+        }
+        for(int i=0;i<12;++i)
+            shv::invoke(0x262B14F48D29DE80ULL,replacement,i,retention.drawable[i],retention.texture[i],retention.palette[i]);
+        shv::invoke(0xCD8A7537A9B52F06ULL,replacement); // CLEAR_ALL_PED_PROPS
+        for(int i=0;i<8;++i) if(retention.prop[i]>=0)
+            shv::invoke(0x93376B65A266EB5FULL,replacement,i,retention.prop[i],retention.propTexture[i],true);
+    }
+    if(!apply(retention.identity)) { forgetRetention(); return; }
+    retention.candidate=0;
+    log("Mission model and identity reapplied.");
 }
+
 bool pressed(int key) {
     bool down = (GetAsyncKeyState(key) & 0x8000) != 0;
     bool edge = down && !previous[key]; previous[key] = down; return edge;
@@ -169,27 +269,28 @@ void draw() {
         text(.032f,y,.36f,labels[i]);
     }
     char buffer[100];
-    std::snprintf(buffer,sizeof(buffer),"Hash letto: 0x%08X", model(playerPed()));
+    std::snprintf(buffer,sizeof(buffer),"Current hash: 0x%08X", model(playerPed()));
     text(.032f,.34f,.30f,buffer);
     rect(.27f,.43f,.50f,.095f,15,18,25,235);
     text(.032f,.39f,.27f,status.c_str());
-    text(.032f,.44f,.27f,"Frecce / Num8-2: scegli | Invio / Num5: applica | Esc: chiudi");
+    text(.032f,.44f,.27f,"Arrows / Num8-2: select | Enter / Num5: apply | Esc: close");
 }
 void ScriptMain() {
     wchar_t path[MAX_PATH]{}; GetModuleFileNameW(module,path,MAX_PATH);
     folder = path; folder = folder.substr(0,folder.find_last_of(L"\\/")+1);
     openKey = static_cast<int>(GetPrivateProfileIntW(L"Menu",L"OpenKey",VK_F6,(folder+L"IdentityMask.ini").c_str()));
     if(openKey < VK_F1 || openKey > VK_F24) openKey = VK_F6;
-    log("Identity Mask 0.2: ScriptMain running.");
+    log("Identity Mask 0.3: ScriptMain running.");
     char keyLog[80]; std::snprintf(keyLog,sizeof(keyLog),"Menu virtual key: %d (F6 = 117)",openKey); log(keyLog);
     for (;;) {
-        // Never carry the old mask silently to a different ped or a loaded save.
+        // Restore the old allocation first; the retention profile survives it.
         if(patch.info && monitorPatch) {
             const auto current = reinterpret_cast<std::uintptr_t>(shv::entity(playerPed()));
             std::uintptr_t info = 0;
             if(current != patch.ped || !readMemory(current+0x20,&info,sizeof(info)) || info != patch.info)
                 restore();
         }
+        retainMissionModel();
         const bool toggle=pressed(openKey);
         const bool up=pressed(VK_UP) | pressed(VK_NUMPAD8);
         const bool down=pressed(VK_DOWN) | pressed(VK_NUMPAD2);
@@ -202,7 +303,10 @@ void ScriptMain() {
                 shv::invoke(0xFE99B66D079CF6BCULL,0,control,true);
             if(up) selection=(selection+3)%4;
             if(down) selection=(selection+1)%4;
-            if(enter) { if(selection==3) restore(); else apply(identities[selection]); }
+            if(enter) {
+                if(selection==3) { if(restore()) forgetRetention(); }
+                else selectIdentity(identities[selection]);
+            }
             if(escape) menu=false;
             if(menu) draw();
         }
@@ -213,7 +317,7 @@ BOOL APIENTRY DllMain(HMODULE instance,DWORD reason,LPVOID) {
     if(reason==DLL_PROCESS_ATTACH) {
         module=instance; DisableThreadLibraryCalls(instance);
         shv::owner=instance;
-        startupLog(instance,"Identity Mask 0.2: DLL attached");
+        startupLog(instance,"Identity Mask 0.3: DLL attached");
         if(!shv::load()) { startupLog(instance,"Initialization failed; see missing export above"); return FALSE; }
         scriptRegister(instance,ScriptMain);
         startupLog(instance,"Script registered; waiting for ScriptMain");
